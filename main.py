@@ -16,8 +16,9 @@ COR_TEXTO = (255, 255, 255)
 TAMANHO_FONTE = 36
 VELOCIDADE_PLATAFORMA_MOVEL = 2
 
-# Estabelece a pasta que contém as figuras.
+# Estabelece a pasta que contém as figuras e sons.
 diretorio_img = path.join(path.dirname(__file__), 'img')
+diretorio_sons = path.join(path.dirname(__file__), 'sounds')
 
 # Define estados possíveis do jogador
 PARADO = 0
@@ -39,7 +40,7 @@ def carregar_spritesheet(spritesheet, linhas, colunas):
     return sprites
 
 class Jogador(pygame.sprite.Sprite):
-    def __init__(self, spritesheet_jogador):
+    def __init__(self, spritesheet_jogador, som_pulo):
         super().__init__()
         spritesheet_jogador = pygame.transform.scale(spritesheet_jogador, (192, 192))  # Supondo que o sprite sheet original seja 48x48 e tenha 4x4 sprites
         spritesheet = carregar_spritesheet(spritesheet_jogador, 4, 4)
@@ -60,6 +61,8 @@ class Jogador(pygame.sprite.Sprite):
         self.ultimo_update = pygame.time.get_ticks()
         self.intervalo_quadros = 300
         self.direcao_direita = True
+        self.pulos_disponiveis = 2  # Para o pulo duplo
+        self.som_pulo = som_pulo
 
     def atualizar(self, teclas_pressionadas):
         self.velocidade_y += GRAVIDADE
@@ -80,6 +83,7 @@ class Jogador(pygame.sprite.Sprite):
             self.rect.bottom = ALTURA_TELA
             self.velocidade_y = 0
             self.no_chao = True
+            self.pulos_disponiveis = 2  # Resetar os pulos disponíveis quando tocar o chão
 
         agora = pygame.time.get_ticks()
         tempo_decorrido = agora - self.ultimo_update
@@ -97,10 +101,12 @@ class Jogador(pygame.sprite.Sprite):
             self.rect.center = centro
 
     def pular(self):
-        if self.no_chao:
+        if self.pulos_disponiveis > 0:
             self.velocidade_y = -FORCA_PULO
             self.no_chao = False
             self.estado = PULANDO
+            self.pulos_disponiveis -= 1
+            self.som_pulo.play()
 
 class Plataforma(pygame.sprite.Sprite):
     def __init__(self, x, y, largura, altura, cor=(0, 255, 0)):
@@ -130,30 +136,62 @@ class ZonaPerigosa(pygame.sprite.Sprite):
         self.rect.x = x
         self.rect.y = y
 
+class Moeda(pygame.sprite.Sprite):
+    def __init__(self, x, y, imagem_moeda):
+        super().__init__()
+        self.image = pygame.image.load(imagem_moeda).convert_alpha()
+        self.image = pygame.transform.scale(self.image, (20, 20))  # Reduzir o tamanho da moeda
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
 def desenhar_texto(tela, texto, fonte, cor, x, y):
     superficie_texto = fonte.render(texto, True, cor)
     rect_texto = superficie_texto.get_rect()
     rect_texto.topleft = (x, y)
     tela.blit(superficie_texto, rect_texto)
 
+def mostrar_menu(tela, fundo, fonte):
+    tela.blit(fundo, (0, 0))
+    desenhar_texto(tela, "Coin Master", fonte, COR_TEXTO, LARGURA_TELA // 2 - 100, ALTURA_TELA // 2 - 100)
+    desenhar_texto(tela, "Pressione ENTER para iniciar", fonte, COR_TEXTO, LARGURA_TELA // 2 - 150, ALTURA_TELA // 2)
+    pygame.display.flip()
+
 def main():
     pygame.init()
     tela = pygame.display.set_mode((LARGURA_TELA, ALTURA_TELA))
-    pygame.display.set_caption("Jogo Plataforma")
+    pygame.display.set_caption("Coin Master")
 
     fonte = pygame.font.Font(None, TAMANHO_FONTE)
 
     # Carregar imagem de fundo
     fundo = pygame.image.load(path.join(diretorio_img, 'background.jpg')).convert()
 
+    # Carregar sons
+    som_pulo = pygame.mixer.Sound(path.join(diretorio_sons, 'pulo.wav'))
+    som_moeda = pygame.mixer.Sound(path.join(diretorio_sons, 'coletar_moeda.wav'))
+
+    # Mostrar tela de menu
+    mostrar_menu(tela, fundo, fonte)
+    no_menu = True
+    while no_menu:
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif evento.type == pygame.KEYDOWN:
+                if evento.key == pygame.K_RETURN:
+                    no_menu = False
+
     spritesheet_jogador = pygame.image.load(path.join(diretorio_img, 'hero.png')).convert_alpha()
-    jogador = Jogador(spritesheet_jogador)
+    jogador = Jogador(spritesheet_jogador, som_pulo)
     todos_sprites = pygame.sprite.Group()
     todos_sprites.add(jogador)
 
     plataformas = pygame.sprite.Group()
     plataformas_moveis = pygame.sprite.Group()
     zonas_perigosas = pygame.sprite.Group()
+    moedas = pygame.sprite.Group()
 
     # Adiciona plataformas iniciais
     plataformas.add(Plataforma(100, 500, 200, 10))
@@ -172,9 +210,20 @@ def main():
     for zona_perigosa in zonas_perigosas:
         todos_sprites.add(zona_perigosa)
 
+    def adicionar_moedas():
+        for _ in range(10):  # Adicionar 10 moedas em posições aleatórias
+            x = random.randint(0, LARGURA_TELA - 32)
+            y = random.randint(0, ALTURA_TELA - 32)
+            moeda = Moeda(x, y, path.join(diretorio_img, 'coin.png'))
+            moedas.add(moeda)
+            todos_sprites.add(moeda)
+
+    adicionar_moedas()
+
     relogio = pygame.time.Clock()
     pontuacao = 0
     rodando = True
+    perdeu = False
 
     while rodando:
         teclas_pressionadas = pygame.key.get_pressed()
@@ -184,36 +233,45 @@ def main():
             elif evento.type == pygame.KEYDOWN:
                 if evento.key == pygame.K_SPACE:
                     jogador.pular()
+                elif evento.key == pygame.K_r and perdeu:
+                    return main()
 
-        jogador.atualizar(teclas_pressionadas)
-        for plataforma_movel in plataformas_moveis:
-            plataforma_movel.atualizar()  # Atualiza as plataformas móveis
+        if not perdeu:
+            jogador.atualizar(teclas_pressionadas)
+            for plataforma_movel in plataformas_moveis:
+                plataforma_movel.atualizar()  # Atualiza as plataformas móveis
 
-        colisoes = pygame.sprite.spritecollide(jogador, plataformas, False)
-        if colisoes:
-            jogador.rect.bottom = colisoes[0].rect.top
-            jogador.velocidade_y = 0
-            jogador.no_chao = True
+            colisoes = pygame.sprite.spritecollide(jogador, plataformas, False)
+            if colisoes:
+                jogador.rect.bottom = colisoes[0].rect.top
+                jogador.velocidade_y = 0
+                jogador.no_chao = True
+                jogador.pulos_disponiveis = 2  # Resetar os pulos disponíveis ao tocar uma plataforma
 
-        colisoes_moveis = pygame.sprite.spritecollide(jogador, plataformas_moveis, False)
-        if colisoes_moveis:
-            jogador.rect.bottom = colisoes_moveis[0].rect.top
-            jogador.velocidade_y = 0
-            jogador.no_chao = True
-            jogador.rect.x += VELOCIDADE_PLATAFORMA_MOVEL * colisoes_moveis[0].direcao
+            colisoes_moveis = pygame.sprite.spritecollide(jogador, plataformas_moveis, False)
+            if colisoes_moveis:
+                jogador.rect.bottom = colisoes_moveis[0].rect.top
+                jogador.velocidade_y = 0
+                jogador.no_chao = True
+                jogador.pulos_disponiveis = 2  # Resetar os pulos disponíveis ao tocar uma plataforma móvel
+                jogador.rect.x += VELOCIDADE_PLATAFORMA_MOVEL * colisoes_moveis[0].direcao
 
-        colisoes_perigosas = pygame.sprite.spritecollide(jogador, zonas_perigosas, False)
-        if colisoes_perigosas:
-            desenhar_texto(tela, "Perdeu o jogo", fonte, COR_TEXTO, LARGURA_TELA // 2 - 100, ALTURA_TELA // 2)
-            pygame.display.flip()
-            pygame.time.wait(2000)
-            # Reiniciar o jogo
-            return main()
+            colisoes_perigosas = pygame.sprite.spritecollide(jogador, zonas_perigosas, False)
+            if colisoes_perigosas:
+                perdeu = True
 
-        pontuacao += 2
+            colisoes_moedas = pygame.sprite.spritecollide(jogador, moedas, True)
+            if colisoes_moedas:
+                pontuacao += len(colisoes_moedas)
+                som_moeda.play()
+                if len(moedas) == 0:  # Se todas as moedas foram coletadas
+                    adicionar_moedas()  # Adicionar mais moedas
+
         tela.blit(fundo, (0, 0))  # Desenha o fundo na tela
         todos_sprites.draw(tela)
         desenhar_texto(tela, f"Pontuação: {pontuacao}", fonte, COR_TEXTO, 10, 10)
+        if perdeu:
+            desenhar_texto(tela, "Perdeu o jogo. Pressione R para reiniciar", fonte, COR_TEXTO, LARGURA_TELA // 2 - 200, ALTURA_TELA // 2)
         pygame.display.flip()
         relogio.tick(60)
 
@@ -222,4 +280,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
