@@ -210,7 +210,7 @@ def main():
             # Reiniciar o jogo
             return main()
 
-        pontuacao += 1
+        pontuacao += 2
         tela.blit(fundo, (0, 0))  # Desenha o fundo na tela
         todos_sprites.draw(tela)
         desenhar_texto(tela, f"Pontuação: {pontuacao}", fonte, COR_TEXTO, 10, 10)
